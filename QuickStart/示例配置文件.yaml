@@ -1,0 +1,98 @@
+# 示例配置文件 - 基于RAPTOR方法修改
+# 这个配置展示了如何设置一个基本的GraphRAG系统
+
+################################# 基础设置  #################################
+# 是否使用实体向量数据库
+use_entities_vdb: True
+# 是否使用关系向量数据库 (LightRAG需要设为True)
+use_relations_vdb: False
+# LLM最大token限制
+llm_model_max_token_size: 32768
+# 是否启用实体-文档块链接 (HippoRAG需要)
+use_entity_link_chunk: False
+# 是否启用图增强
+enable_graph_augmentation: False
+
+# 索引名称
+index_name: demo_graph
+# 向量数据库类型
+vdb_type: faiss  # 可选: faiss/vector/colbert
+
+################################# 文档分块配置  #################################
+chunk:
+  chunk_token_size: 800        # 每个文档块的token数量
+  chunk_overlap_token_size: 100 # 文档块重叠的token数量
+  token_model: gpt-3.5-turbo   # 用于计算token的模型
+  chunk_method: chunking_by_token_size  # 分块方法
+
+################################# 图构建配置  #################################
+graph:
+  # 图类型选择
+  graph_type: tree_graph  # 可选: rkg_graph/er_graph/tree_graph/passage_graph
+  
+  # 是否启用边关键词 (LightRAG特性)
+  enable_edge_keywords: False
+  
+  # 是否强制重建图
+  force: False
+
+  # 树形图配置 (适用于RAPTOR)
+  build_tree_from_leaves: False
+  reduction_dimension: 10      # 降维参数
+  summarization_length: 100    # 摘要长度
+  num_layers: 3               # 树的层数
+  top_k: 5                    # 每层选择的top-k节点
+  start_layer: 3              # 开始层
+  selection_mode: top_k       # 选择模式
+  max_length_in_cluster: 2000 # 聚类中最大长度
+  threshold: 0.15             # 聚类阈值
+  cluster_metric: cosine      # 聚类度量
+  random_seed: 42             # 随机种子
+  
+################################# 检索配置  #################################
+retriever:
+  query_type: basic           # 查询类型
+  enable_local: False         # 是否启用本地搜索
+  use_entity_similarity_for_ppr: True  # PPR是否使用实体相似度
+  top_k_entity_for_ppr: 8     # PPR的top-k实体数
+  node_specificity: True      # 节点特异性
+  damping: 0.15              # PPR阻尼因子
+  top_k: 8                   # 检索top-k结果
+
+################################# 查询配置  #################################
+query: 
+  query_type: qa              # 查询类型: qa/summarization
+  only_need_context: False    # 是否只需要上下文
+  enable_hybrid_query: True   # 启用混合查询
+  augmentation_ppr: True      # PPR增强
+  response_type: "Multiple Paragraphs"  # 响应类型
+  level: 2                    # 查询级别
+  community_information: True # 是否包含社区信息
+  retrieve_top_k: 15          # 检索top-k数量
+  
+  # Token限制设置
+  naive_max_token_for_text_unit: 8000    # 简单搜索最大token
+  local_max_token_for_text_unit: 3000    # 本地搜索最大token
+  max_token_for_text_unit: 3000          # 文本单元最大token
+  
+  # RAPTOR特有配置
+  tree_search: True           # 启用树搜索
+  
+  # 实体和关系token限制
+  entities_max_tokens: 1500
+  relationships_max_tokens: 1500
+  
+  # 本地搜索配置
+  max_token_for_local_context: 3600      # 本地上下文最大token
+  local_max_token_for_community_report: 2400  # 社区报告最大token
+  local_community_single_one: False      # 是否只使用单个社区
+  
+  # 全局搜索配置
+  use_global_query: True                  # 启用全局查询
+  global_min_community_rating: 0         # 全局社区最小评分
+  global_max_consider_community: 256     # 全局最大考虑社区数
+  global_max_token_for_community_report: 8192  # 全局社区报告最大token
+  max_token_for_global_context: 3000     # 全局上下文最大token
+  
+  # 多步推理配置
+  max_ir_steps: 2             # 最大推理步骤数
