@@ -14,6 +14,62 @@ class SynonymReplacer:
         self.gps_name = ["GE", "西门子", "飞利浦", "Siemens", "通用电气", "Philips"]
         self.load_synonyms()
     
+    def normalize_spaces(self, text: str) -> str:
+        """
+        处理文本中的空格：
+        1. 中文与中文之间的空格去掉
+        2. 英文与英文之间的多个空格替换为1个空格
+        3. 中文与英文之间的空格保持不变
+        """
+        if not text:
+            return text
+            
+        def is_chinese(char):
+            """判断字符是否为中文"""
+            return '\u4e00' <= char <= '\u9fff'
+        
+        def is_english(char):
+            """判断字符是否为英文字母"""
+            return char.isascii() and char.isalpha()
+        
+        result = []
+        i = 0
+        
+        while i < len(text):
+            char = text[i]
+            
+            if char == ' ':
+                # 找到连续的空格
+                space_start = i
+                while i < len(text) and text[i] == ' ':
+                    i += 1
+                
+                # 获取空格前后的字符
+                prev_char = text[space_start - 1] if space_start > 0 else ''
+                next_char = text[i] if i < len(text) else ''
+                
+                # 判断空格前后字符的类型
+                prev_is_chinese = is_chinese(prev_char)
+                prev_is_english = is_english(prev_char)
+                next_is_chinese = is_chinese(next_char)
+                next_is_english = is_english(next_char)
+                
+                # 根据规则处理空格
+                if prev_is_chinese and next_is_chinese:
+                    # 中文与中文之间的空格去掉
+                    pass  # 不添加任何空格
+                elif prev_is_english and next_is_english:
+                    # 英文与英文之间的多个空格替换为1个空格
+                    result.append(' ')
+                else:
+                    # 中文与英文之间的空格保持不变（保留1个空格）
+                    result.append(' ')
+            else:
+                result.append(char)
+                i += 1
+        
+        return ''.join(result)
+    
     def load_synonyms(self):
         try:
             df = pd.read_json(self.excel_file_path, orient='records')
@@ -129,6 +185,9 @@ class SynonymReplacer:
         if not text.strip():
             return text,text, [],{"competitor_name_appear":None, 
                  "only_competitor_product_appear": None }
+
+        # 在处理同义词替换之前先规范化空格
+        text = self.normalize_spaces(text)
 
         split_pattern = r'((?:\n|\r|\t|\\[nrt])+)'
         parts = re.split(split_pattern, text)
