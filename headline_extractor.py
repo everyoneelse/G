@@ -3,7 +3,7 @@ import re
 def extract_headline_texts_and_pos(text):
     """
     Extract headline texts and their positions from text.
-    Handles both self-closing and regular headline tags.
+    Handles both self-closing and regular headline tags, including tags with attributes.
     
     Args:
         text (str): Input text containing headline tags
@@ -16,10 +16,13 @@ def extract_headline_texts_and_pos(text):
     if not text or not isinstance(text, str):
         return [], []
     
+    # Updated pattern to handle attributes in opening tags
     pattern = r'''
         <Headline(?:_([^>]+?))?/>          # Self-closing tag with optional underscore content
         |                                  # OR
-        <Headline[^>]*>(.*?)</Headline>    # Regular tag with content
+        <Headline(?:\s[^>]*)?>             # Opening tag with optional attributes
+        (.*?)                              # Content (captured)
+        </Headline>                        # Closing tag
     '''
     
     try:
@@ -51,6 +54,13 @@ def test_extract_headline():
         '<Headline_some_content/>',
         '<Headline class="test">Content with attributes</Headline>',
         
+        # The problematic case from the user
+        '<Headline Icon="Explanation">解释 </Headline>',
+        
+        # More attribute cases
+        '<Headline Icon="Test" class="header">Content</Headline>',
+        '<Headline style="color: red;">Styled content</Headline>',
+        
         # Edge cases
         '',  # Empty string
         None,  # None input
@@ -60,7 +70,7 @@ def test_extract_headline():
         '<Headline>Content with <nested>tags</nested></Headline>',  # Nested tags
         
         # Multiple headlines
-        '<Headline>First</Headline><Headline_second/><Headline>Third</Headline>',
+        '<Headline>First</Headline><Headline_second/><Headline Icon="test">Third</Headline>',
         
         # Malformed cases
         '<Headline>Unclosed headline',
