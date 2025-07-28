@@ -266,4 +266,55 @@ If you find this work useful, please consider citing our papers:
 }
  ```
 
+# Headline标签修复解决方案
+
+## 问题描述
+
+需要处理两种Headline标签情况：
+1. `<Headline[^>]*>(.*?)</Headline>` - 完整标签
+2. `<Headline[^>]*>(.*?)</Headline` - 缺少结束 `>` 的不完整标签
+
+原始方法使用两个正则表达式分别匹配，但存在贪婪匹配导致的问题。
+
+## 解决方案
+
+采用精确匹配策略：
+
+1. **查找开始标签**：使用 `<Headline[^>]*>` 找到所有开始标签
+2. **逐个匹配结束标签**：对每个开始标签，查找最近的结束标签
+3. **判断完整性**：检查结束标签是否包含 `>`
+4. **修复不完整标签**：在缺少 `>` 的位置添加
+
+## 使用方法
+
+```python
+from final_headline_fix import process_text
+
+# 处理文本
+text = """<Headline Icon="Test">标题</Headline 不完整标签"""
+fixed_text = process_text(text)
+print(fixed_text)  # <Headline Icon="Test">标题</Headline> 不完整标签
+```
+
+## 核心函数
+
+### `fix_headline_tags_precise(text)`
+- 输入：包含Headline标签的文本
+- 输出：修复后的文本和匹配结果列表
+- 功能：精确识别和修复不完整的Headline标签
+
+### `process_text(text)`
+- 简化接口，只返回修复后的文本
+
+## 测试结果
+
+✅ 正确处理完整标签  
+✅ 正确识别和修复不完整标签  
+✅ 避免贪婪匹配问题  
+✅ 处理混合情况  
+
+## 文件说明
+
+- `final_headline_fix.py` - 主要实现文件，包含完整的解决方案和测试用例
+
 
