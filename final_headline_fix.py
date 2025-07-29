@@ -30,11 +30,15 @@ def fix_headline_tags_precise(text):
         is_self_closing = bool(re.search(r"/\s*>$", start_tag_text))
 
         if is_self_closing:
-            # 自闭合标签，无需查找结束标签，也无需修复
+            # 自闭合标签：<Headline_XXXX/>
+            # 提取 "XXXX" 作为 content（若存在）
+            context_match = re.search(r"<Headline_([^/\s>]+)", start_tag_text)
+            context_str = context_match.group(1) if context_match else ''
+
             result = {
                 'start': start_pos,
                 'end': start_end,
-                'content': '',
+                'content': context_str,
                 'type': 'self-closing',
                 'needs_fix': False,
                 'full_match': start_tag_text
