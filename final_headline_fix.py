@@ -22,23 +22,49 @@ def fix_headline_tags_precise(text):
     for i, start_match in enumerate(start_matches):
         start_pos = start_match.start()
         start_end = start_match.end()
-        
-        # 从开始标签后面查找结束标签
+
+        # 当前开始标签文本（包含 <>）
+        start_tag_text = text[start_pos:start_end]
+
+        # 判断是否为自闭合标签，例如 <Headline_使用场景/>
+        is_self_closing = bool(re.search(r"/\s*>$", start_tag_text))
+
+        if is_self_closing:
+            # 自闭合标签：<Headline_XXXX/>
+            # 提取 "XXXX" 作为 content（若存在）
+            context_match = re.search(r"<Headline_([^/\s>]+)", start_tag_text)
+            context_str = context_match.group(1) if context_match else ''
+
+            result = {
+                'start': start_pos,
+                'end': start_end,
+                'content': context_str,
+                'type': 'self-closing',
+                'needs_fix': False,
+                'full_match': start_tag_text
+            }
+
+            results.append(result)
+
+            print(f"  {i+1}. [self-closing] 位置({result['start']}, {result['end']})")
+            continue  # 进入下一个开始标签
+
+        # 非自闭合标签，继续查找结束标签
         remaining_text = text[start_end:]
-        
+
         # 查找 </Headline> 或 </Headline
         end_pattern = r'(.*?)</Headline(>?)'
         end_match = re.search(end_pattern, remaining_text, flags=re.IGNORECASE | re.DOTALL)
-        
+
         if end_match:
             content = end_match.group(1)
             has_closing_bracket = end_match.group(2) == '>'
-            
+
             # 计算绝对位置
             content_start = start_end
             content_end = start_end + end_match.start(2) + (1 if has_closing_bracket else 0)
             full_end = start_end + end_match.end()
-            
+
             result = {
                 'start': start_pos,
                 'end': full_end,
@@ -47,9 +73,9 @@ def fix_headline_tags_precise(text):
                 'needs_fix': not has_closing_bracket,
                 'full_match': text[start_pos:full_end]
             }
-            
+
             results.append(result)
-            
+
             print(f"  {i+1}. [{result['type']}] 位置({result['start']}, {result['end']})")
             print(f"     内容: {repr(result['content'][:50])}...")
             print(f"     需要修复: {result['needs_fix']}")
