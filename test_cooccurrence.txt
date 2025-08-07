@@ -1,0 +1,27 @@
+token_id	token_text	cooccurring_count	example_cooccurring_tokens
+13	.	25	257: a;4673: learning;37573:Machine;4998: amazing;15496:Hello;11:,;3665: powerful;37906:Python;1366: data;3037: technology
+318	 is	15	4673: learning;257: a;995: world;37573:Machine;4998: amazing;3303: language;15496:Hello;11:,;428: this;13:.
+4673	 learning	10	37573:Machine;4998: amazing;3047: training;13:.;29744:Deep;4981: models;1366: data;761: need;3037: technology;318: is
+3303	 language	10	7587: processing;35364:Natural;6121: transform;8300: programming;13:.;364:ers;3665: powerful;37906:Python;318: is;351: with
+15496	Hello	7	257: a;995: world;1332: test;11:,;428: this;13:.;318: is
+995	 world	7	257: a;1332: test;15496:Hello;11:,;428: this;13:.;318: is
+11	,	7	257: a;995: world;1332: test;15496:Hello;428: this;13:.;318: is
+428	 this	7	257: a;995: world;1332: test;15496:Hello;11:,;13:.;318: is
+257	 a	7	995: world;1332: test;15496:Hello;11:,;428: this;13:.;318: is
+1332	 test	7	257: a;995: world;15496:Hello;11:,;428: this;13:.;318: is
+35364	Natural	6	7587: processing;3303: language;6121: transform;364:ers;13:.;351: with
+7587	 processing	6	35364:Natural;3303: language;6121: transform;364:ers;13:.;351: with
+351	 with	6	7587: processing;35364:Natural;3303: language;6121: transform;364:ers;13:.
+6121	 transform	6	7587: processing;35364:Natural;3303: language;364:ers;13:.;351: with
+364	ers	6	7587: processing;35364:Natural;3303: language;6121: transform;13:.;351: with
+29744	Deep	6	4673: learning;4981: models;1366: data;3047: training;761: need;13:.
+4981	 models	6	29744:Deep;4673: learning;1366: data;3047: training;761: need;13:.
+761	 need	6	29744:Deep;4673: learning;4981: models;1366: data;3047: training;13:.
+3047	 training	6	29744:Deep;4673: learning;4981: models;1366: data;761: need;13:.
+1366	 data	6	29744:Deep;4673: learning;4981: models;3047: training;761: need;13:.
+37573	Machine	5	3037: technology;4673: learning;4998: amazing;13:.;318: is
+4998	 amazing	5	3037: technology;4673: learning;37573:Machine;13:.;318: is
+3037	 technology	5	4673: learning;37573:Machine;4998: amazing;13:.;318: is
+37906	Python	5	3665: powerful;3303: language;8300: programming;13:.;318: is
+8300	 programming	5	3665: powerful;37906:Python;3303: language;13:.;318: is
+3665	 powerful	5	37906:Python;3303: language;8300: programming;13:.;318: is
