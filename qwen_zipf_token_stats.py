@@ -32,6 +32,7 @@ from typing import List
 import orjson  # type: ignore
 from tqdm import tqdm
 from transformers import AutoTokenizer
+import os
 
 
 def _init_worker(model_name: str) -> None:
@@ -61,8 +62,22 @@ def _process_file(jsonl_path: str, batch_size: int) -> Counter[int]:
     local_counter: Counter[int] = Counter()
     texts_buffer: List[str] = []
 
+    # Prepare a per-file tqdm to show reading progress. We track bytes read to
+    # avoid the overhead of counting lines twice. Using `leave=False` keeps the
+    # console tidy while still giving users real-time feedback for the current
+    # file being processed.
+    file_size = os.path.getsize(jsonl_path)
+    pbar = tqdm(
+        total=file_size,
+        desc=f"{Path(jsonl_path).name}",
+        unit="B",
+        unit_scale=True,
+        leave=False,
+    )
+
     with open(jsonl_path, "rb") as fh:
         for raw_line in fh:
+            pbar.update(len(raw_line))
             try:
                 obj = orjson.loads(raw_line)
             except orjson.JSONDecodeError:
@@ -73,8 +88,11 @@ def _process_file(jsonl_path: str, batch_size: int) -> Counter[int]:
                 _update_counter(texts_buffer, local_counter)
                 texts_buffer.clear()
 
+
     if texts_buffer:
         _update_counter(texts_buffer, local_counter)
+
+    pbar.close()
 
     return local_counter
 
