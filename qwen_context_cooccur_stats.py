@@ -44,6 +44,8 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import multiprocessing as mp
+from functools import partial
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +84,13 @@ def parse_args() -> argparse.Namespace:  # noqa: D401 – simple wrapper
         "--num-threads",
         type=int,
         default=os.cpu_count() or 4,
-        help="Number of worker threads for parallel tokenization and accumulation",
+        help="Number of worker threads for parallel tokenization and accumulation (thread mode)",
+    )
+    parser.add_argument(
+        "--num-proc",
+        type=int,
+        default=0,
+        help="Use multiprocessing with this many processes (per-file workers). 0 disables and uses threads.",
     )
     parser.add_argument(
         "--out-file",
@@ -115,15 +123,17 @@ def accumulate_pairs(
 ) -> None:
     """Given a *single* sequence of token IDs, slice it into non-overlapping
     windows of length ``ctx_len`` and update the adjacency mapping ``adj``.
+
+    Optimized to avoid allocating ``uniq - {t}`` for every token.
     """
     for start in range(0, len(token_ids), ctx_len):
         segment = token_ids[start : start + ctx_len]
         if len(segment) < 2:
             continue  # Nothing to pair with
         uniq = set(segment)
-        # For each token, add all others in the same window as neighbours
-        for t in uniq:
-            adj[t].update(uniq - {t})
+        # Add all neighbours (including self); we will skip self at write-out
+        for token in uniq:
+            adj[token].update(uniq)
 
 
 def _process_text_batch(
@@ -154,6 +164,69 @@ def _merge_adjacency(
         global_adj[token_id].update(neighbours)
 
 
+# ------------------------------ Multiprocessing -----------------------------
+
+def _mp_init_worker(model_name: str) -> None:
+    """Initialise tokenizer as a process-global to avoid reloading per batch."""
+    global MP_TOKENIZER  # pylint: disable=global-statement
+    MP_TOKENIZER = AutoTokenizer.from_pretrained(
+        model_name,
+        trust_remote_code=True,
+        use_fast=True,
+    )
+
+
+def _mp_process_one_file(
+    jsonl_path: str,
+    batch_size: int,
+    ctx_len: int,
+) -> Dict[int, Set[int]]:
+    """Process a single jsonl file in one process and return its adjacency map."""
+    local_adj: Dict[int, Set[int]] = defaultdict(set)
+
+    texts_buffer: List[str] = []
+    file_size = os.path.getsize(jsonl_path)
+    pbar = tqdm(
+        total=file_size,
+        desc=f"{Path(jsonl_path).name}",
+        unit="B",
+        unit_scale=True,
+        leave=False,
+    )
+
+    with open(jsonl_path, "rb") as fh:
+        for raw_line in fh:
+            pbar.update(len(raw_line))
+            try:
+                obj = orjson.loads(raw_line)
+            except orjson.JSONDecodeError:
+                continue
+            texts_buffer.append(obj.get("text", ""))
+            if len(texts_buffer) >= batch_size:
+                input_ids_batches = MP_TOKENIZER(
+                    texts_buffer,
+                    add_special_tokens=False,
+                    padding=False,
+                    truncation=False,
+                ).input_ids
+                for ids in input_ids_batches:
+                    accumulate_pairs(ids, ctx_len, local_adj)
+                texts_buffer.clear()
+
+    if texts_buffer:
+        input_ids_batches = MP_TOKENIZER(
+            texts_buffer,
+            add_special_tokens=False,
+            padding=False,
+            truncation=False,
+        ).input_ids
+        for ids in input_ids_batches:
+            accumulate_pairs(ids, ctx_len, local_adj)
+
+    pbar.close()
+    return local_adj
+
+
 # ---------------------------------------------------------------------------
 # Main logic
 # ---------------------------------------------------------------------------
@@ -165,13 +238,16 @@ def main() -> None:  # noqa: D401 – script entrypoint
     if not jsonl_files:
         raise FileNotFoundError(f"No .jsonl files found under {args.data_dir}")
 
+    mode_str = (
+        f"Processes: {args.num_proc}" if args.num_proc and args.num_proc > 0 else f"Threads: {args.num_threads}"
+    )
     print(
         f"Found {len(jsonl_files)} jsonl files | "
         f"Batch size: {args.batch_size} | Context len: {args.context_length} | "
-        f"Threads: {args.num_threads}"
+        f"{mode_str}"
     )
 
-    # Warm up tokenizer once in the main thread to ensure artifacts are cached
+    # Warm up tokenizer once in the main thread/process to ensure artifacts are cached
     _ = AutoTokenizer.from_pretrained(
         args.model,
         trust_remote_code=True,
@@ -181,31 +257,57 @@ def main() -> None:  # noqa: D401 – script entrypoint
     # adjacency mapping: token_id -> set(other_token_ids)
     adjacency: Dict[int, Set[int]] = defaultdict(set)
 
-    # Thread pool for parallel batch processing
-    futures = []
-    with ThreadPoolExecutor(max_workers=args.num_threads) as executor:
-        batches_pbar = tqdm(desc="Batches", position=1)
-
-        def _drain_one_when_too_many(max_inflight: int) -> None:
-            if len(futures) >= max_inflight:
-                done_future = next(as_completed(futures))
-                futures.remove(done_future)
-                local_adj = done_future.result()
+    if args.num_proc and args.num_proc > 0:
+        # ----------------------------- Multiprocessing path ------------------
+        with mp.Pool(processes=args.num_proc, initializer=_mp_init_worker, initargs=(args.model,)) as pool:
+            work_fn = partial(_mp_process_one_file, batch_size=args.batch_size, ctx_len=args.context_length)
+            for local_adj in tqdm(
+                pool.imap_unordered(work_fn, map(str, jsonl_files)),
+                total=len(jsonl_files),
+                desc="Files",
+            ):
                 _merge_adjacency(adjacency, local_adj)
-                batches_pbar.update(1)
+    else:
+        # ----------------------------- Threaded path ------------------------
+        # Thread pool for parallel batch processing
+        futures = []
+        with ThreadPoolExecutor(max_workers=args.num_threads) as executor:
+            batches_pbar = tqdm(desc="Batches", position=1)
 
-        # Iterate through files
-        for jp in tqdm(jsonl_files, desc="Files", position=0):
-            texts_buffer: List[str] = []
-            with jp.open("rb") as fh:
-                for raw_line in fh:
-                    try:
-                        obj = orjson.loads(raw_line)
-                    except orjson.JSONDecodeError:
-                        continue
-                    texts_buffer.append(obj.get("text", ""))
+            def _drain_one_when_too_many(max_inflight: int) -> None:
+                if len(futures) >= max_inflight:
+                    done_future = next(as_completed(futures))
+                    futures.remove(done_future)
+                    local_adj = done_future.result()
+                    _merge_adjacency(adjacency, local_adj)
+                    batches_pbar.update(1)
 
-                    if len(texts_buffer) >= args.batch_size:
+            # Iterate through files
+            for jp in tqdm(jsonl_files, desc="Files", position=0):
+                texts_buffer: List[str] = []
+                with jp.open("rb") as fh:
+                    for raw_line in fh:
+                        try:
+                            obj = orjson.loads(raw_line)
+                        except orjson.JSONDecodeError:
+                            continue
+                        texts_buffer.append(obj.get("text", ""))
+
+                        if len(texts_buffer) >= args.batch_size:
+                            submit_texts = texts_buffer
+                            texts_buffer = []
+                            futures.append(
+                                executor.submit(
+                                    _process_text_batch,
+                                    submit_texts,
+                                    args.context_length,
+                                    args.model,
+                                )
+                            )
+                            _drain_one_when_too_many(args.num_threads * 4)
+
+                    # Flush remaining buffer for the current file
+                    if texts_buffer:
                         submit_texts = texts_buffer
                         texts_buffer = []
                         futures.append(
@@ -218,26 +320,12 @@ def main() -> None:  # noqa: D401 – script entrypoint
                         )
                         _drain_one_when_too_many(args.num_threads * 4)
 
-                # Flush remaining buffer for the current file
-                if texts_buffer:
-                    submit_texts = texts_buffer
-                    texts_buffer = []
-                    futures.append(
-                        executor.submit(
-                            _process_text_batch,
-                            submit_texts,
-                            args.context_length,
-                            args.model,
-                        )
-                    )
-                    _drain_one_when_too_many(args.num_threads * 4)
-
-        # Drain the rest
-        for done_future in as_completed(futures):
-            local_adj = done_future.result()
-            _merge_adjacency(adjacency, local_adj)
-            batches_pbar.update(1)
-        batches_pbar.close()
+            # Drain the rest
+            for done_future in as_completed(futures):
+                local_adj = done_future.result()
+                _merge_adjacency(adjacency, local_adj)
+                batches_pbar.update(1)
+            batches_pbar.close()
 
     # ---------------------------------------------------------------------
     # Write adjacency list to disk
@@ -245,7 +333,8 @@ def main() -> None:  # noqa: D401 – script entrypoint
     args.out_file.parent.mkdir(parents=True, exist_ok=True)
     with args.out_file.open("w", encoding="utf-8") as fout:
         for token_id, neigh in adjacency.items():
-            neigh_str = " ".join(str(n) for n in sorted(neigh))
+            # Skip self when writing to avoid storing self-loops
+            neigh_str = " ".join(str(n) for n in sorted(n for n in neigh if n != token_id))
             fout.write(f"{token_id}\t{neigh_str}\n")
 
     print(f"Adjacency list saved to {args.out_file.resolve()}")
