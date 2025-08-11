@@ -104,6 +104,38 @@ def parse_args() -> argparse.Namespace:  # noqa: D401 – simple wrapper
 # Thread-local storage for per-thread tokenizer instances
 _thread_local = threading.local()
 
+# ------------------------------ Chinese filters ------------------------------
+
+def _is_cjk_codepoint(cp: int) -> bool:
+    # Basic CJK Unified Ideographs
+    if 0x4E00 <= cp <= 0x9FFF:
+        return True
+    # CJK Unified Ideographs Extension A
+    if 0x3400 <= cp <= 0x4DBF:
+        return True
+    # CJK Compatibility Ideographs
+    if 0xF900 <= cp <= 0xFAFF:
+        return True
+    # CJK Extensions B..I (astral planes)
+    if 0x20000 <= cp <= 0x2EBEF:
+        return True
+    # Ideographic number zero '〇'
+    if cp == 0x3007:
+        return True
+    return False
+
+
+def _is_chinese_text(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    # Only accept if every character is a CJK ideograph
+    for ch in stripped:
+        if not _is_cjk_codepoint(ord(ch)):
+            return False
+    return True
+
+
 def _get_thread_tokenizer(model_name_or_path: str) -> AutoTokenizer:
     tokenizer = getattr(_thread_local, "tokenizer", None)
     if tokenizer is None:
@@ -113,24 +145,48 @@ def _get_thread_tokenizer(model_name_or_path: str) -> AutoTokenizer:
             use_fast=True,
         )
         _thread_local.tokenizer = tokenizer
+    # init cache lazily
+    if getattr(_thread_local, "chinese_token_cache", None) is None:
+        _thread_local.chinese_token_cache = {}
     return tokenizer
 
+
+def _thread_is_chinese_token(token_id: int, tokenizer: AutoTokenizer) -> bool:
+    cache = _thread_local.chinese_token_cache  # type: ignore[attr-defined]
+    cached = cache.get(token_id)
+    if cached is not None:
+        return cached
+    token_str = tokenizer.decode([token_id], skip_special_tokens=True, clean_up_tokenization_spaces=True)
+    is_cn = _is_chinese_text(token_str)
+    cache[token_id] = is_cn
+    return is_cn
+
+
+from typing import Callable, Optional  # noqa: E402  (after top imports)
 
 def accumulate_pairs(
     token_ids: List[int],
     ctx_len: int,
     adj: Dict[int, Set[int]],
+    token_filter: Optional[Callable[[int], bool]] = None,
 ) -> None:
     """Given a *single* sequence of token IDs, slice it into non-overlapping
     windows of length ``ctx_len`` and update the adjacency mapping ``adj``.
 
     Optimized to avoid allocating ``uniq - {t}`` for every token.
+    Optionally filters tokens before forming co-occurrence pairs.
     """
     for start in range(0, len(token_ids), ctx_len):
         segment = token_ids[start : start + ctx_len]
         if len(segment) < 2:
             continue  # Nothing to pair with
+        if token_filter is not None:
+            segment = [tid for tid in segment if token_filter(tid)]
+            if len(segment) < 2:
+                continue
         uniq = set(segment)
+        if len(uniq) < 2:
+            continue
         # Add all neighbours (including self); we will skip self at write-out
         for token in uniq:
             adj[token].update(uniq)
@@ -152,7 +208,7 @@ def _process_text_batch(
 
     local_adj: Dict[int, Set[int]] = defaultdict(set)
     for ids in input_ids_batches:
-        accumulate_pairs(ids, ctx_len, local_adj)
+        accumulate_pairs(ids, ctx_len, local_adj, token_filter=lambda t: _thread_is_chinese_token(t, tokenizer))
     return local_adj
 
 
@@ -174,6 +230,19 @@ def _mp_init_worker(model_name: str) -> None:
         trust_remote_code=True,
         use_fast=True,
     )
+    # Per-process cache for Chinese-token checks
+    global MP_CHINESE_CACHE  # pylint: disable=global-statement
+    MP_CHINESE_CACHE = {}
+
+
+def _mp_is_chinese_token(token_id: int) -> bool:
+    cached = MP_CHINESE_CACHE.get(token_id)  # type: ignore[name-defined]
+    if cached is not None:
+        return cached
+    token_str = MP_TOKENIZER.decode([token_id], skip_special_tokens=True, clean_up_tokenization_spaces=True)  # type: ignore[name-defined]
+    is_cn = _is_chinese_text(token_str)
+    MP_CHINESE_CACHE[token_id] = is_cn  # type: ignore[name-defined]
+    return is_cn
 
 
 def _mp_process_one_file(
@@ -210,7 +279,7 @@ def _mp_process_one_file(
                     truncation=False,
                 ).input_ids
                 for ids in input_ids_batches:
-                    accumulate_pairs(ids, ctx_len, local_adj)
+                    accumulate_pairs(ids, ctx_len, local_adj, token_filter=_mp_is_chinese_token)
                 texts_buffer.clear()
 
     if texts_buffer:
@@ -221,7 +290,7 @@ def _mp_process_one_file(
             truncation=False,
         ).input_ids
         for ids in input_ids_batches:
-            accumulate_pairs(ids, ctx_len, local_adj)
+            accumulate_pairs(ids, ctx_len, local_adj, token_filter=_mp_is_chinese_token)
 
     pbar.close()
     return local_adj
@@ -306,19 +375,19 @@ def main() -> None:  # noqa: D401 – script entrypoint
                             )
                             _drain_one_when_too_many(args.num_threads * 4)
 
-                    # Flush remaining buffer for the current file
-                    if texts_buffer:
-                        submit_texts = texts_buffer
-                        texts_buffer = []
-                        futures.append(
-                            executor.submit(
-                                _process_text_batch,
-                                submit_texts,
-                                args.context_length,
-                                args.model,
-                            )
+                # Flush remaining buffer for the current file
+                if texts_buffer:
+                    submit_texts = texts_buffer
+                    texts_buffer = []
+                    futures.append(
+                        executor.submit(
+                            _process_text_batch,
+                            submit_texts,
+                            args.context_length,
+                            args.model,
                         )
-                        _drain_one_when_too_many(args.num_threads * 4)
+                    )
+                    _drain_one_when_too_many(args.num_threads * 4)
 
             # Drain the rest
             for done_future in as_completed(futures):
