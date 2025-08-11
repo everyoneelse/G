@@ -331,11 +331,25 @@ def main() -> None:  # noqa: D401 – script entrypoint
     # Write adjacency list to disk
     # ---------------------------------------------------------------------
     args.out_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Create a tokenizer for decoding token IDs to strings for output
+    writer_tokenizer = AutoTokenizer.from_pretrained(
+        args.model,
+        trust_remote_code=True,
+        use_fast=True,
+    )
+
     with args.out_file.open("w", encoding="utf-8") as fout:
         for token_id, neigh in adjacency.items():
-            # Skip self when writing to avoid storing self-loops
-            neigh_str = " ".join(str(n) for n in sorted(n for n in neigh if n != token_id))
-            fout.write(f"{token_id}\t{neigh_str}\n")
+            # Decode base token and neighbour tokens; skip self to avoid self-loops
+            base_token_str = writer_tokenizer.decode([token_id])
+            neighbour_token_strs = [
+                writer_tokenizer.decode([n]) for n in sorted(n for n in neigh if n != token_id)
+            ]
+            # Serialize as JSON to be robust against spaces/tabs/newlines in tokens
+            base_json = orjson.dumps(base_token_str).decode("utf-8")
+            neighbours_json = orjson.dumps(neighbour_token_strs).decode("utf-8")
+            fout.write(f"{base_json}\t{neighbours_json}\n")
 
     print(f"Adjacency list saved to {args.out_file.resolve()}")
 
