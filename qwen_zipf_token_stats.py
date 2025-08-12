@@ -111,7 +111,12 @@ def parse_args() -> argparse.Namespace:  # noqa: D401 – simple wrapper
     parser.add_argument("--batch-size", type=int, default=1024, help="Texts per tokenizer batch")
     parser.add_argument("--num-proc", type=int, default=max(mp.cpu_count() - 1, 1), help="Number of worker processes")
     parser.add_argument("--model", default="Qwen/Qwen2_5-7B-Instruct", help="Tokenizer model name")
-    parser.add_argument("--out-file", type=Path, help="Optionally save token frequencies to file")
+    parser.add_argument(
+        "--out-file",
+        type=Path,
+        default=Path("output.tsv"),
+        help="Path to save token frequencies (TSV). Default: ./output.tsv",
+    )
     return parser.parse_args()
 
 
